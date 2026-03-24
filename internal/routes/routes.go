@@ -3,9 +3,13 @@ package routes
 import (
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/middleware"
 )
 
 func Register(r *gin.Engine) {
+	// Global middleware - order matters!
+	r.Use(middleware.Recovery())
+	r.Use(middleware.RequestID())
 	r.Use(corsMiddleware())
 
 	api := r.Group("/api")
@@ -14,6 +18,11 @@ func Register(r *gin.Engine) {
 		api.GET("/subscriptions", handlers.ListSubscriptions)
 		api.GET("/subscriptions/:id", handlers.GetSubscription)
 		api.GET("/plans", handlers.ListPlans)
+		
+		// Test endpoints for panic recovery (only in non-production)
+		api.GET("/test/panic", handlers.TestPanicHandler)
+		api.GET("/test/panic-after-write", handlers.PanicAfterWriteHandler)
+		api.GET("/test/nested-panic", handlers.NestedPanicHandler)
 	}
 }
 
