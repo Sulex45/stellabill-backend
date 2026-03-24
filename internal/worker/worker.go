@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
+	"stellarbill-backend/internal/security"
 )
 
 // Config holds worker configuration
@@ -73,12 +75,15 @@ func NewWorker(store JobStore, executor JobExecutor, config Config) *Worker {
 func (w *Worker) Start() {
 	w.wg.Add(1)
 	go w.schedulerLoop()
-	log.Printf("Worker %s started with poll interval %v", w.config.WorkerID, w.config.PollInterval)
+	security.ProductionLogger().Info("Worker started",
+		zap.String("worker_id", w.config.WorkerID),
+		zap.Duration("poll_interval", w.config.PollInterval))
 }
 
 // Stop gracefully shuts down the worker
 func (w *Worker) Stop() error {
-	log.Printf("Worker %s shutting down...", w.config.WorkerID)
+	security.ProductionLogger().Info("Worker shutting down",
+		zap.String("worker_id", w.config.WorkerID))
 	w.cancel()
 	
 	// Wait for graceful shutdown with timeout
@@ -90,7 +95,8 @@ func (w *Worker) Stop() error {
 	
 	select {
 	case <-done:
-		log.Printf("Worker %s stopped gracefully", w.config.WorkerID)
+		security.ProductionLogger().Info("Worker stopped gracefully",
+			zap.String("worker_id", w.config.WorkerID))
 		return nil
 	case <-time.After(w.config.ShutdownTimeout):
 		return fmt.Errorf("worker shutdown timeout after %v", w.config.ShutdownTimeout)
@@ -122,7 +128,8 @@ func (w *Worker) pollAndDispatch() {
 
 	jobs, err := w.store.ListPending(w.config.BatchSize)
 	if err != nil {
-		log.Printf("Error listing pending jobs: %v", err)
+		security.ProductionLogger().Error("Error listing pending jobs",
+			zap.Error(err))
 		return
 	}
 
@@ -130,7 +137,9 @@ func (w *Worker) pollAndDispatch() {
 		// Try to acquire lock
 		acquired, err := w.store.AcquireLock(job.ID, w.config.WorkerID, w.config.LockTTL)
 		if err != nil {
-			log.Printf("Error acquiring lock for job %s: %v", job.ID, err)
+			security.ProductionLogger().Error("Error acquiring lock",
+				zap.String("job_id", job.ID),
+				zap.Error(err))
 			continue
 		}
 		
@@ -160,7 +169,9 @@ func (w *Worker) executeJob(job *Job) {
 	now := time.Now()
 	job.StartedAt = &now
 	if err := w.store.Update(job); err != nil {
-		log.Printf("Error updating job %s to running: %v", job.ID, err)
+		security.ProductionLogger().Error("Error updating job to running",
+			zap.String("job_id", job.ID),
+			zap.Error(err))
 		return
 	}
 
@@ -185,7 +196,9 @@ func (w *Worker) handleJobSuccess(job *Job) {
 	job.LastError = ""
 	
 	if err := w.store.Update(job); err != nil {
-		log.Printf("Error updating job %s to completed: %v", job.ID, err)
+		security.ProductionLogger().Error("Error updating job to completed",
+			zap.String("job_id", job.ID),
+			zap.Error(err))
 		return
 	}
 
@@ -193,7 +206,8 @@ func (w *Worker) handleJobSuccess(job *Job) {
 	w.metrics.JobsSucceeded++
 	w.metrics.mu.Unlock()
 
-	log.Printf("Job %s completed successfully", job.ID)
+	security.ProductionLogger().Info("Job completed successfully",
+		zap.String("job_id", job.ID))
 }
 
 // handleJobFailure implements retry logic with dead-letter queue
@@ -210,8 +224,10 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		w.metrics.JobsDeadLettered++
 		w.metrics.mu.Unlock()
 		
-		log.Printf("Job %s moved to dead-letter queue after %d attempts: %v", 
-			job.ID, job.Attempts, execErr)
+		security.ProductionLogger().Warn("Job moved to dead-letter queue",
+			zap.String("job_id", job.ID),
+			zap.Int("attempts", job.Attempts),
+			zap.Error(execErr))
 	} else {
 		// Retry with exponential backoff
 		job.Status = JobStatusPending
@@ -222,15 +238,22 @@ func (w *Worker) handleJobFailure(job *Job, execErr error) {
 		w.metrics.JobsFailed++
 		w.metrics.mu.Unlock()
 		
-		log.Printf("Job %s failed (attempt %d/%d), retrying in %v: %v", 
-			job.ID, job.Attempts, w.config.MaxAttempts, backoff, execErr)
+		security.ProductionLogger().Warn("Job failed, retrying",
+			zap.String("job_id", job.ID),
+			zap.Int("attempt", job.Attempts),
+			zap.Int("max_attempts", w.config.MaxAttempts),
+			zap.Duration("backoff", backoff),
+			zap.Error(execErr))
 	}
 	
 	if err := w.store.Update(job); err != nil {
-		log.Printf("Error updating failed job %s: %v", job.ID, err)
+		security.ProductionLogger().Error("Error updating failed job",
+			zap.String("job_id", job.ID),
+			zap.Error(err))
 	}
 }
 
 func generateWorkerID() string {
 	return fmt.Sprintf("worker-%d", time.Now().UnixNano())
 }
+
