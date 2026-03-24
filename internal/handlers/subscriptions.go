@@ -39,12 +39,8 @@ func ListSubscriptions(c *gin.Context) {
 	}
 
 	// TODO: load from DB, handle filtering
-	// For now, we mock an in-memory DB so you can test it in your browser
-	mockDB := []Subscription{
-		{ID: "sub_1", PlanID: "pln_1", Customer: "cus_1", Status: "active", Amount: "1000", Interval: "month", NextBilling: "2026-04-01"},
-		{ID: "sub_2", PlanID: "pln_2", Customer: "cus_2", Status: "active", Amount: "2000", Interval: "month", NextBilling: "2026-04-05"},
-		{ID: "sub_3", PlanID: "pln_3", Customer: "cus_3", Status: "canceled", Amount: "5000", Interval: "month", NextBilling: "2026-04-10"},
-	}
+	// For now, we initialize an empty slice until DB is connected
+	var mockDB []Subscription
 	
 	page, nextCursor, hasMore := pagination.PaginateSlice(mockDB, cursor, limit)
 

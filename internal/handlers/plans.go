@@ -38,13 +38,8 @@ func ListPlans(c *gin.Context) {
 	}
 
 	// TODO: load from DB using limit and cursor
-	// For now, we mock an in-memory DB so you can test it in your browser
-	mockDB := []Plan{
-		{ID: "pln_1", Name: "Basic", Amount: "1000", Currency: "usd", Interval: "month"},
-		{ID: "pln_2", Name: "Pro", Amount: "2000", Currency: "usd", Interval: "month"},
-		{ID: "pln_3", Name: "Enterprise", Amount: "5000", Currency: "usd", Interval: "month"},
-		{ID: "pln_4", Name: "Ultimate", Amount: "9000", Currency: "usd", Interval: "year"},
-	}
+	// For now, we initialize an empty slice until DB is connected
+	var mockDB []Plan
 	
 	page, nextCursor, hasMore := pagination.PaginateSlice(mockDB, cursor, limit)
 
