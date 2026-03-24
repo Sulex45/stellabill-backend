@@ -16,7 +16,7 @@ func main() {
 	}
 
 	router := gin.Default()
-	routes.Register(router)
+	routes.Register(router, &cfg)
 
 	addr := ":" + cfg.Port
 	if p := os.Getenv("PORT"); p != "" {

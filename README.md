@@ -101,8 +101,21 @@ curl http://localhost:8080/api/health
 | `PORT`         | `8080`                                       | HTTP server port               |
 | `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
 | `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `SECURITY_HSTS_MAX_AGE`| `31536000`                                | Max-age for HTTP Strict Transport Security |
+| `SECURITY_FRAME_OPTIONS`| `DENY`                                   | X-Frame-Options value (DENY or SAMEORIGIN) |
 
 In production, set these via your host’s environment or secrets manager; do not commit secrets.
+
+---
+
+## Security Headers & Deployment
+
+The backend automatically applies baseline HTTP security headers to all responses:
+- **X-Frame-Options**: Prevents clickjacking (defaults to `DENY`).
+- **X-Content-Type-Options**: Prevents MIME sniffing (set to `nosniff`).
+- **Strict-Transport-Security (HSTS)**: Enforces secure connections (disabled in `ENV=development`).
+
+**Proxy-layer Conflicts**: If you are deploying behind a reverse proxy or load balancer (e.g., Nginx, AWS ALB, Cloudflare) that also sets these security headers, please ensure that they are not duplicated. The Go application's middleware will conditionally apply these headers if not already set, but managing them at a single layer (either app or proxy) is recommended.
 
 ---
 

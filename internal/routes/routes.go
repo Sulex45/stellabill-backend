@@ -2,10 +2,13 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/middleware"
 )
 
-func Register(r *gin.Engine) {
+func Register(r *gin.Engine, cfg *config.Config) {
+	r.Use(middleware.SecurityHeaders(cfg))
 	r.Use(corsMiddleware())
 
 	api := r.Group("/api")
