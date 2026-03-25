@@ -11,6 +11,7 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 - [Background Worker](#background-worker)
 - [Local setup](#local-setup)
 - [Configuration](#configuration)
+- [Testing](#testing)
 - [API reference](#api-reference)
 - [Contributing (open source)](#contributing-open-source)
 - [Project layout](#project-layout)
@@ -145,6 +146,64 @@ In production, set these via your host’s environment or secrets manager; do no
 
 ---
 
+## Testing
+
+### Unit tests
+
+Unit tests cover config validation, service logic, HTTP handler behaviour,
+circuit breaker, and the background worker. They use in-memory mocks and
+require **no external services**.
+
+```bash
+go test ./...
+```
+
+### Integration tests
+
+Integration tests spin up a real ephemeral Postgres container via Docker and
+validate the full request path — from route handler through service and
+repository to the database — then tear the container down automatically.
+
+**Prerequisites:** Docker must be running locally (or in CI with Docker socket
+access). No manual database setup is required.
+
+```bash
+# Run integration tests
+go test -tags integration -v -race -count=1 ./integration/...
+```
+
+The test suite in `integration/` covers:
+
+| Scenario | Expected |
+|---|---|
+| Owner fetches own active subscription | 200 with full plan + billing envelope |
+| Unknown subscription ID | 404 |
+| Soft-deleted subscription | 410 |
+| Caller does not own the subscription | 403 |
+| Missing `Authorization` header | 401 |
+| Malformed JWT | 401 |
+| Subscription exists but referenced plan is missing | 200 with `"plan not found"` warning |
+| Subscription has non-numeric amount | 500 |
+| 10 concurrent reads of the same subscription | all 200, no data race |
+| `GET /api/health` | 200 |
+| `GET /api/plans` | 200 |
+| `GET /api/subscriptions` | 200 |
+
+**Migration timing and startup race handling:** `TestMain` applies all SQL
+migrations before any test runs. The Postgres container wait strategy requires
+the ready-to-accept-connections log line to appear **twice** (once during
+recovery init, once when actually ready), preventing false-positive startup
+races.
+
+**CI example:**
+
+```yaml
+- name: Integration tests
+  run: go test -tags integration -race -count=1 -timeout 120s ./integration/...
+```
+
+---
+
 ## API reference
 
 Base URL (local): `http://localhost:8080`
@@ -230,31 +289,49 @@ We welcome contributions from the community. Below is a short guide to get you f
 stellabill-backend/
 ├── cmd/
 │   └── server/
-│       └── main.go          # Entry point, Gin router, server start
+│       └── main.go                  # Entry point, Gin router, server start
+├── integration/                     # Integration tests (requires Docker)
+│   ├── main_test.go                 # TestMain — starts container, runs migrations
+│   ├── helpers_test.go              # JWT helpers, router builder, seed utilities
+│   ├── health_test.go               # GET /api/health
+│   ├── list_plans_test.go           # GET /api/plans
+│   ├── list_subscriptions_test.go   # GET /api/subscriptions
+│   └── subscriptions_test.go        # GET /api/subscriptions/:id (9 test cases)
 ├── internal/
 │   ├── config/
-│   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET
+│   │   └── config.go                # Loads ENV, PORT, DATABASE_URL, JWT_SECRET
 │   ├── handlers/
-│   │   ├── health.go        # GET /api/health
-│   │   ├── plans.go         # GET /api/plans
-│   │   └── subscriptions.go # GET /api/subscriptions, /api/subscriptions/:id
+│   │   ├── health.go                # GET /api/health
+│   │   ├── plans.go                 # GET /api/plans
+│   │   └── subscriptions.go        # GET /api/subscriptions, /api/subscriptions/:id
+│   ├── middleware/
+│   │   └── auth.go                  # JWT bearer-token middleware
+│   ├── repository/
+│   │   ├── interfaces.go            # SubscriptionRepository, PlanRepository interfaces
+│   │   ├── models.go                # SubscriptionRow, PlanRow structs
+│   │   ├── mock.go                  # In-memory implementations for unit tests
+│   │   └── postgres/
+│   │       ├── subscription_repo.go # Real Postgres implementation (pgx/v5)
+│   │       └── plan_repo.go         # Real Postgres implementation (pgx/v5)
 │   ├── routes/
-│       └── routes.go        # Registers routes and CORS middleware
+│   │   └── routes.go                # Registers routes and CORS middleware
+│   ├── service/
+│   │   └── subscription_service.go  # Business logic — ownership, soft-delete, billing
+│   ├── testutil/
+│   │   └── db.go                    # Ephemeral container lifecycle helpers
 │   └── worker/
-│       ├── job.go           # Job model and JobStore interface
-│       ├── store_memory.go  # In-memory JobStore implementation
-│       ├── worker.go        # Background worker with scheduler loop
-│       ├── executor.go      # Billing job executor
-│       ├── scheduler.go     # Job scheduling utilities
-│       ├── *_test.go        # Comprehensive test suite (95%+ coverage)
-│       ├── README.md        # Worker documentation
-│       ├── SECURITY.md      # Security analysis and threat model
-│       └── INTEGRATION.md   # Integration guide with examples
+│       ├── job.go                   # Job model and JobStore interface
+│       ├── store_memory.go          # In-memory JobStore implementation
+│       ├── worker.go                # Background worker with scheduler loop
+│       ├── executor.go              # Billing job executor
+│       └── scheduler.go             # Job scheduling utilities
+├── migrations/
+│   ├── migrations.go                # embed.FS export for the SQL files
+│   ├── 001_create_plans.sql
+│   └── 002_create_subscriptions.sql
 ├── go.mod
 ├── go.sum
-├── .gitignore
-├── README.md
-└── WORKER_IMPLEMENTATION.md # Implementation summary
+└── README.md
 ```
 
 ---
