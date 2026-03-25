@@ -158,6 +158,13 @@ Base URL (local): `http://localhost:8080`
 
 All JSON responses. CORS allowed for `*` origin with common methods and headers.
 
+## Multi-tenant security (new foundation)
+
+- JWT must include `sub` (caller ID) and optionally `tenant` (tenant ID).
+- Requests must carry `X-Tenant-ID` header. Middleware will reject requests with missing tenant or mismatched token/ header  (`tenant mismatch`).
+- Subscription reads are scoped in repository by `TenantID`, and service layer enforces `callerID` ownership.
+- New tests cover cross-tenant prevention, missing tenant header, spoofed tenant header, and forbidden/corp access paths.
+
 ---
 
 ## Contributing (open source)

@@ -21,6 +21,7 @@ func TestGetDetail_HappyPath(t *testing.T) {
 	sub := &repository.SubscriptionRow{
 		ID:          "sub-1",
 		PlanID:      "plan-1",
+		TenantID:    "tenant-1",
 		CustomerID:  "cust-1",
 		Status:      "active",
 		Amount:      "2999",
@@ -35,7 +36,7 @@ func TestGetDetail_HappyPath(t *testing.T) {
 		repository.NewMockPlanRepo(plan),
 	)
 
-	detail, warnings, err := svc.GetDetail(context.Background(), "cust-1", "sub-1")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-1", "sub-1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -92,6 +93,7 @@ func TestGetDetail_MissingPlan(t *testing.T) {
 	sub := &repository.SubscriptionRow{
 		ID:         "sub-2",
 		PlanID:     "plan-missing",
+		TenantID:   "tenant-1",
 		CustomerID: "cust-2",
 		Status:     "active",
 		Amount:     "999",
@@ -105,7 +107,7 @@ func TestGetDetail_MissingPlan(t *testing.T) {
 		repository.NewMockPlanRepo(), // empty — no plans
 	)
 
-	detail, warnings, err := svc.GetDetail(context.Background(), "cust-2", "sub-2")
+	detail, warnings, err := svc.GetDetail(context.Background(), "tenant-1", "cust-2", "sub-2")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -122,6 +124,7 @@ func TestGetDetail_SoftDeleted(t *testing.T) {
 	sub := &repository.SubscriptionRow{
 		ID:         "sub-3",
 		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
 		CustomerID: "cust-3",
 		Status:     "cancelled",
 		Amount:     "500",
@@ -135,7 +138,7 @@ func TestGetDetail_SoftDeleted(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-3", "sub-3")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-3", "sub-3")
 	if err != service.ErrDeleted {
 		t.Errorf("expected ErrDeleted, got %v", err)
 	}
@@ -147,7 +150,7 @@ func TestGetDetail_NotFound(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-x", "sub-unknown")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-x", "sub-unknown")
 	if err != service.ErrNotFound {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -157,6 +160,7 @@ func TestGetDetail_UnparseableAmount(t *testing.T) {
 	sub := &repository.SubscriptionRow{
 		ID:         "sub-4",
 		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
 		CustomerID: "cust-4",
 		Status:     "active",
 		Amount:     "not-a-number",
@@ -170,7 +174,7 @@ func TestGetDetail_UnparseableAmount(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-4", "sub-4")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-4", "sub-4")
 	if err != service.ErrBillingParse {
 		t.Errorf("expected ErrBillingParse, got %v", err)
 	}
@@ -180,6 +184,7 @@ func TestGetDetail_WrongCaller(t *testing.T) {
 	sub := &repository.SubscriptionRow{
 		ID:         "sub-5",
 		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
 		CustomerID: "cust-5",
 		Status:     "active",
 		Amount:     "1000",
@@ -193,8 +198,32 @@ func TestGetDetail_WrongCaller(t *testing.T) {
 		repository.NewMockPlanRepo(),
 	)
 
-	_, _, err := svc.GetDetail(context.Background(), "cust-other", "sub-5")
+	_, _, err := svc.GetDetail(context.Background(), "tenant-1", "cust-other", "sub-5")
 	if err != service.ErrForbidden {
 		t.Errorf("expected ErrForbidden, got %v", err)
+	}
+}
+
+func TestGetDetail_CrossTenantPrevention(t *testing.T) {
+	sub := &repository.SubscriptionRow{
+		ID:         "sub-6",
+		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
+		CustomerID: "cust-6",
+		Status:     "active",
+		Amount:     "1000",
+		Currency:   "USD",
+		Interval:   "month",
+		DeletedAt:  nil,
+	}
+
+	svc := service.NewSubscriptionService(
+		repository.NewMockSubscriptionRepo(sub),
+		repository.NewMockPlanRepo(),
+	)
+
+	_, _, err := svc.GetDetail(context.Background(), "tenant-2", "cust-6", "sub-6")
+	if err != service.ErrNotFound {
+		t.Errorf("expected ErrNotFound for cross-tenant query, got %v", err)
 	}
 }

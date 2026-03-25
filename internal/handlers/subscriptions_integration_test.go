@@ -17,11 +17,12 @@ import (
 
 const testJWTSecret = "integration-test-secret"
 
-// makeTestJWT generates a valid HS256 JWT with the given subject, signed with testJWTSecret.
-func makeTestJWT(subject string) string {
+// makeTestJWT generates a valid HS256 JWT with the given subject and tenant, signed with testJWTSecret.
+func makeTestJWT(subject, tenant string) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": subject,
-		"exp": time.Now().Add(time.Hour).Unix(),
+		"sub":    subject,
+		"tenant": tenant,
+		"exp":    time.Now().Add(time.Hour).Unix(),
 	})
 	signed, err := token.SignedString([]byte(testJWTSecret))
 	if err != nil {
@@ -50,6 +51,7 @@ func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
 		ID:          subID,
 		PlanID:      planID,
+		TenantID:    "tenant-1",
 		CustomerID:  customerID,
 		Status:      "active",
 		Amount:      "2999",
@@ -69,13 +71,14 @@ func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 
 	r := buildIntegrationRouter(subRepo, planRepo)
 
-	// 1. Generate a valid JWT whose subject is the customer ID.
-	tokenStr := makeTestJWT(customerID)
+	// 1. Generate a valid JWT whose subject is the customer ID and tenant.
+	tokenStr := makeTestJWT(customerID, "tenant-1")
 
-	// 2. Make the GET request with the Authorization header.
+	// 2. Make the GET request with Authorization + tenant headers.
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/"+subID, nil)
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-1")
 	r.ServeHTTP(w, req)
 
 	// 3. Assert HTTP 200.
@@ -151,6 +154,40 @@ func TestIntegration_GetSubscription_HappyPath(t *testing.T) {
 	}
 }
 
+func TestIntegration_GetSubscription_MissingTenant_Returns401(t *testing.T) {
+	subRepo := repository.NewMockSubscriptionRepo()
+	planRepo := repository.NewMockPlanRepo()
+	r := buildIntegrationRouter(subRepo, planRepo)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	tokenStr := makeTestJWT("cust-1", "")
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	// no X-Tenant-ID header and no tenant claim
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestIntegration_GetSubscription_SpoofedTenant_Returns401(t *testing.T) {
+	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{ID: "sub-1", TenantID: "tenant-1", CustomerID: "cust-1"})
+	planRepo := repository.NewMockPlanRepo()
+	r := buildIntegrationRouter(subRepo, planRepo)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
+	tokenStr := makeTestJWT("cust-1", "tenant-1")
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-2")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
 func TestIntegration_GetSubscription_MissingAuthHeader_Returns401(t *testing.T) {
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()
@@ -187,6 +224,7 @@ func TestIntegration_GetSubscription_WrongCaller_Returns403(t *testing.T) {
 	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
 		ID:         subID,
 		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
 		CustomerID: ownerID,
 		Status:     "active",
 		Amount:     "999",
@@ -196,12 +234,13 @@ func TestIntegration_GetSubscription_WrongCaller_Returns403(t *testing.T) {
 	planRepo := repository.NewMockPlanRepo()
 	r := buildIntegrationRouter(subRepo, planRepo)
 
-	// JWT subject is a different caller.
-	tokenStr := makeTestJWT("other-caller")
+	// JWT subject is a different caller but same tenant.
+	tokenStr := makeTestJWT("other-caller", "tenant-1")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/"+subID, nil)
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-1")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
@@ -217,6 +256,7 @@ func TestIntegration_GetSubscription_SoftDeleted_Returns410(t *testing.T) {
 	subRepo := repository.NewMockSubscriptionRepo(&repository.SubscriptionRow{
 		ID:         subID,
 		PlanID:     "plan-1",
+		TenantID:   "tenant-1",
 		CustomerID: customerID,
 		Status:     "cancelled",
 		Amount:     "999",
@@ -227,11 +267,12 @@ func TestIntegration_GetSubscription_SoftDeleted_Returns410(t *testing.T) {
 	planRepo := repository.NewMockPlanRepo()
 	r := buildIntegrationRouter(subRepo, planRepo)
 
-	tokenStr := makeTestJWT(customerID)
+	tokenStr := makeTestJWT(customerID, "tenant-1")
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/"+subID, nil)
 	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("X-Tenant-ID", "tenant-1")
 	r.ServeHTTP(w, req)
 
 	if w.Code != http.StatusGone {

@@ -54,7 +54,33 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
+		// Tenant ID enforcement.
+		tenantHeader := strings.TrimSpace(c.GetHeader("X-Tenant-ID"))
+		tenantClaim := ""
+		if v, ok := claims["tenant"]; ok {
+			if ts, ok := v.(string); ok {
+				tenantClaim = strings.TrimSpace(ts)
+			}
+		}
+
+		var tenantID string
+		if tenantHeader != "" && tenantClaim != "" {
+			if tenantHeader != tenantClaim {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "tenant mismatch"})
+				return
+			}
+			tenantID = tenantHeader
+		} else if tenantHeader != "" {
+			tenantID = tenantHeader
+		} else if tenantClaim != "" {
+			tenantID = tenantClaim
+		} else {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "tenant id required"})
+			return
+		}
+
 		c.Set("callerID", sub)
+		c.Set("tenantID", tenantID)
 		c.Next()
 	}
 }

@@ -6,6 +6,7 @@ import "time"
 type SubscriptionRow struct {
 	ID          string
 	PlanID      string
+	TenantID    string // tenant isolation boundary
 	CustomerID  string // used for ownership check; NOT exposed in response
 	Status      string
 	Amount      string // e.g. "1999" (cents as string) or "19.99"

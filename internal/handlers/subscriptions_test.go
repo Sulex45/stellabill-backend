@@ -19,7 +19,7 @@ type mockSubscriptionService struct {
 	err      error
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, _, _ string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, _, _, _ string) (*service.SubscriptionDetail, []string, error) {
 	return m.detail, m.warnings, m.err
 }
 
@@ -31,6 +31,7 @@ func setupRouter(svc service.SubscriptionService, setCallerID bool) *gin.Engine 
 	if setCallerID {
 		r.Use(func(c *gin.Context) {
 			c.Set("callerID", "caller-123")
+			c.Set("tenantID", "tenant-1")
 			c.Next()
 		})
 	}
@@ -63,6 +64,7 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
 		c.Set("callerID", "caller-123")
+		c.Set("tenantID", "tenant-1")
 		c.Next()
 	})
 	// Register a route that captures whitespace as the id segment.

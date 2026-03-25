@@ -29,9 +29,10 @@ func ListSubscriptions(c *gin.Context) {
 // subscription detail using the provided SubscriptionService.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Read callerID from context (set by AuthMiddleware).
-		callerID, exists := c.Get("callerID")
-		if !exists {
+		// 1. Read callerID and tenantID from context (set by AuthMiddleware).
+		callerID, callerExists := c.Get("callerID")
+		tenantID, tenantExists := c.Get("tenantID")
+		if !callerExists || !tenantExists {
 			c.Header("Content-Type", "application/json; charset=utf-8")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
@@ -45,8 +46,8 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
-		// 3. Call service.
-		detail, warnings, err := svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		// 3. Call service with tenant scope.
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
 		if err != nil {
 			c.Header("Content-Type", "application/json; charset=utf-8")
 			switch err {
