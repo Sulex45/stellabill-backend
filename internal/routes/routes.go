@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/middleware"
 	"stellarbill-backend/internal/repository"
@@ -12,6 +13,29 @@ import (
 
 func Register(r *gin.Engine) {
 	r.Use(corsMiddleware())
+
+	// Load configuration for rate limiting
+	cfg, err := config.Load()
+	if err != nil {
+		// Use defaults if config loading fails
+		cfg = config.Config{
+			RateLimitEnabled: true,
+			RateLimitMode:    "ip",
+			RateLimitRPS:     10,
+			RateLimitBurst:   20,
+			RateLimitWhitelist: []string{"/api/health"},
+		}
+	}
+
+	// Apply rate limiting middleware
+	rateLimitConfig := middleware.RateLimiterConfig{
+		Enabled:        cfg.RateLimitEnabled,
+		Mode:           middleware.RateLimitMode(cfg.RateLimitMode),
+		RequestsPerSec: int64(cfg.RateLimitRPS),
+		BurstSize:      int64(cfg.RateLimitBurst),
+		WhitelistPaths: cfg.RateLimitWhitelist,
+	}
+	r.Use(middleware.RateLimitMiddleware(rateLimitConfig))
 
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {

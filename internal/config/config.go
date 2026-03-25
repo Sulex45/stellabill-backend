@@ -46,6 +46,12 @@ type Config struct {
 	ReadTimeout    int
 	WriteTimeout   int
 	IdleTimeout    int
+	// Rate limiting configuration
+	RateLimitEnabled    bool
+	RateLimitMode       string
+	RateLimitRPS        int
+	RateLimitBurst      int
+	RateLimitWhitelist  []string
 }
 
 // ValidationResult holds the result of configuration validation
@@ -81,6 +87,8 @@ const (
 	DefaultReadTimeout   = 30       // seconds
 	DefaultWriteTimeout  = 30       // seconds
 	DefaultIdleTimeout   = 120      // seconds
+	DefaultRateLimitRPS  = 10       // requests per second
+	DefaultRateLimitBurst = 20      // burst size
 )
 
 // Required environment variables
@@ -97,6 +105,11 @@ var optionalEnvVars = map[string]string{
 	"READ_TIMEOUT":    "30",
 	"WRITE_TIMEOUT":   "30",
 	"IDLE_TIMEOUT":    "120",
+	"RATE_LIMIT_ENABLED": "true",
+	"RATE_LIMIT_MODE": "ip",
+	"RATE_LIMIT_RPS": "10",
+	"RATE_LIMIT_BURST": "20",
+	"RATE_LIMIT_WHITELIST": "/api/health",
 }
 
 // Load loads configuration from environment variables with validation
@@ -110,6 +123,11 @@ func Load() (Config, error) {
 		ReadTimeout:     DefaultReadTimeout,
 		WriteTimeout:    DefaultWriteTimeout,
 		IdleTimeout:     DefaultIdleTimeout,
+		RateLimitEnabled: getEnvBool("RATE_LIMIT_ENABLED", true),
+		RateLimitMode:    getEnv("RATE_LIMIT_MODE", "ip"),
+		RateLimitRPS:     getEnvInt("RATE_LIMIT_RPS", DefaultRateLimitRPS),
+		RateLimitBurst:   getEnvInt("RATE_LIMIT_BURST", DefaultRateLimitBurst),
+		RateLimitWhitelist: getEnvSlice("RATE_LIMIT_WHITELIST", []string{"/api/health"}),
 	}
 
 	result := cfg.Validate()
@@ -221,6 +239,48 @@ func (c *Config) Validate() *ValidationResult {
 		} else {
 			result.Warnings = append(result.Warnings, "IDLE_TIMEOUT invalid, using default")
 		}
+	}
+
+	// Validate rate limiting configuration
+	if val := os.Getenv("RATE_LIMIT_ENABLED"); val != "" {
+		if enabled, err := strconv.ParseBool(val); err == nil {
+			c.RateLimitEnabled = enabled
+		} else {
+			result.Warnings = append(result.Warnings, "RATE_LIMIT_ENABLED invalid, using default")
+		}
+	}
+
+	if mode := os.Getenv("RATE_LIMIT_MODE"); mode != "" {
+		validModes := map[string]bool{"ip": true, "user": true, "hybrid": true}
+		if validModes[mode] {
+			c.RateLimitMode = mode
+		} else {
+			result.Warnings = append(result.Warnings, "RATE_LIMIT_MODE invalid, using default")
+		}
+	}
+
+	if val := os.Getenv("RATE_LIMIT_RPS"); val != "" {
+		if rps, err := strconv.Atoi(val); err == nil && rps > 0 && rps <= 1000 {
+			c.RateLimitRPS = rps
+		} else {
+			result.Warnings = append(result.Warnings, "RATE_LIMIT_RPS invalid, using default")
+		}
+	}
+
+	if val := os.Getenv("RATE_LIMIT_BURST"); val != "" {
+		if burst, err := strconv.Atoi(val); err == nil && burst > 0 && burst <= 5000 {
+			c.RateLimitBurst = burst
+		} else {
+			result.Warnings = append(result.Warnings, "RATE_LIMIT_BURST invalid, using default")
+		}
+	}
+
+	if whitelist := os.Getenv("RATE_LIMIT_WHITELIST"); whitelist != "" {
+		paths := strings.Split(whitelist, ",")
+		for i, path := range paths {
+			paths[i] = strings.TrimSpace(path)
+		}
+		c.RateLimitWhitelist = paths
 	}
 
 	// Set optional env values
@@ -335,6 +395,38 @@ func maskSecret(secret string) string {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+// getEnvBool retrieves an environment variable as boolean with a fallback value
+func getEnvBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+// getEnvInt retrieves an environment variable as integer with a fallback value
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return fallback
+}
+
+// getEnvSlice retrieves an environment variable as string slice with a fallback value
+func getEnvSlice(key string, fallback []string) []string {
+	if v := os.Getenv(key); v != "" {
+		parts := strings.Split(v, ",")
+		for i, part := range parts {
+			parts[i] = strings.TrimSpace(part)
+		}
+		return parts
 	}
 	return fallback
 }
