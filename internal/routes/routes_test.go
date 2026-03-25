@@ -1,47 +1,82 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"stellarbill-backend/internal/audit"
-	"stellarbill-backend/internal/config"
 )
 
-func TestRoutesRegistrationAndCors(t *testing.T) {
+func TestRegister_HealthAndCORS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	cfg := config.Config{
-		Port:        "8080",
-		AdminToken:  "token",
-		AuditSecret: "secret",
-	}
-	sink := &audit.MemorySink{}
-	logger := audit.NewLogger(cfg.AuditSecret, sink)
+	engine := gin.New()
+	Register(engine)
 
-	r := gin.New()
-	Register(r, cfg, logger)
-
-	req, _ := http.NewRequest("OPTIONS", "/api/subscriptions", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/health", nil)
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin: got %q want %q", got, "*")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["status"] != "ok" {
+		t.Fatalf("payload.status: got %v want %q", payload["status"], "ok")
+	}
+	if payload["service"] != "stellarbill-backend" {
+		t.Fatalf("payload.service: got %v want %q", payload["service"], "stellarbill-backend")
+	}
+}
+
+func TestRegister_CORSPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
+
+	req := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/api/health", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 for preflight, got %d", rec.Code)
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusNoContent)
 	}
-	if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
-		t.Fatalf("cors header missing")
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
+		t.Fatalf("expected Access-Control-Allow-Methods to be set")
 	}
+}
 
-	// Regular request passes through middleware chain
-	getReq, _ := http.NewRequest("GET", "/api/health", nil)
-	getRec := httptest.NewRecorder()
-	r.ServeHTTP(getRec, getReq)
-	if getRec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for health, got %d", getRec.Code)
+func TestRegister_GetSubscriptionShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/subscriptions/sub_123", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusOK)
 	}
-	if getRec.Header().Get("Access-Control-Allow-Headers") == "" {
-		t.Fatalf("cors headers not attached on normal request")
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["id"] != "sub_123" {
+		t.Fatalf("payload.id: got %v want %q", payload["id"], "sub_123")
+	}
+	if _, ok := payload["plan_id"]; !ok {
+		t.Fatalf("expected payload.plan_id to be present")
+	}
+	if _, ok := payload["customer"]; !ok {
+		t.Fatalf("expected payload.customer to be present")
 	}
 }

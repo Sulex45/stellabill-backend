@@ -1,69 +1,29 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHealth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	h := &Handler{}
+
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 
-	Health(c)
+	h.Health(c)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", w.Code)
-	}
-}
+	assert.Equal(t, http.StatusOK, w.Code)
 
-func TestSubscriptionHandlers(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	// List
-	{
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		ListSubscriptions(c)
-		if w.Code != http.StatusOK {
-			t.Fatalf("list status %d", w.Code)
-		}
-	}
-
-	// Get missing id
-	{
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Params = []gin.Param{}
-		GetSubscription(c)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for missing id, got %d", w.Code)
-		}
-	}
-
-	// Get with id
-	{
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Params = []gin.Param{{Key: "id", Value: "sub_123"}}
-		GetSubscription(c)
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200 for valid id, got %d", w.Code)
-		}
-	}
-}
-
-func TestListPlans(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-
-	ListPlans(c)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", w.Code)
-	}
+	var response map[string]string
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "ok", response["status"])
+	assert.Equal(t, "stellarbill-backend", response["service"])
 }

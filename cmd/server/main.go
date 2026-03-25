@@ -10,7 +10,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/services"
 )
 
 func main() {
@@ -50,12 +52,12 @@ func main() {
 		log.Printf("Running in %s mode", cfg.Env)
 	}
 
-	// Create router with configured timeouts
+	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(gin.Logger())
 
-	// Set timeouts from configuration
+	// Security headers middleware
 	router.Use(func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
@@ -63,8 +65,11 @@ func main() {
 		c.Next()
 	})
 
-	// Register routes
-	routes.Register(router)
+	// Wire up services and handlers, then register routes
+	planSvc := services.NewPlanService()
+	subSvc := services.NewSubscriptionService()
+	h := handlers.NewHandler(planSvc, subSvc)
+	routes.Register(router, h)
 
 	// Build server address
 	addr := fmt.Sprintf(":%d", cfg.Port)
@@ -86,4 +91,17 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+func newRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(
+		middleware.Recovery(log.Default()),
+		middleware.RequestID(),
+		middleware.Logging(log.Default()),
+		middleware.CORS("*"),
+		middleware.RateLimit(middleware.NewRateLimiter(60, time.Minute)),
+	)
+	routes.Register(router)
+	return router
 }
