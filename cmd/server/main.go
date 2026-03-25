@@ -9,7 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
+	"stellarbill-backend/internal/services"
 )
 
 func main() {
@@ -49,12 +51,12 @@ func main() {
 		log.Printf("Running in %s mode", cfg.Env)
 	}
 
-	// Create router with configured timeouts
+	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(gin.Logger())
 
-	// Set timeouts from configuration
+	// Security headers middleware
 	router.Use(func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
@@ -62,8 +64,11 @@ func main() {
 		c.Next()
 	})
 
-	// Register routes
-	routes.Register(router)
+	// Wire up services and handlers, then register routes
+	planSvc := services.NewPlanService()
+	subSvc := services.NewSubscriptionService()
+	h := handlers.NewHandler(planSvc, subSvc)
+	routes.Register(router, h)
 
 	// Build server address
 	addr := fmt.Sprintf(":%d", cfg.Port)

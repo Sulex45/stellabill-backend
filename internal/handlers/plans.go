@@ -15,13 +15,11 @@ type Plan struct {
 	Description string `json:"description,omitempty"`
 }
 
-type PlanQuery struct {
-	Page  int `form:"page" binding:"omitempty,min=1"`
-	Limit int `form:"limit" binding:"omitempty,min=1,max=100"`
-}
-
-func ListPlans(c *gin.Context) {
-	// TODO: load from DB, filter by merchant
-	plans := []Plan{}
+func (h *Handler) ListPlans(c *gin.Context) {
+	plans, err := h.Plans.ListPlans(c)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"plans": plans})
 }
