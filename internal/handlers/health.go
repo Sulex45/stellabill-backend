@@ -9,41 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const (
-	StatusAlive        = "alive"
-	StatusReady        = "ready"
-	StatusDegraded     = "degraded"
-	StatusUnavailable  = "unavailable"
-
-	ServiceName = "stellarbill-backend"
-)
-
-// DBPinger defines the minimal interface needed for DB health checks
-type DBPinger interface {
-	PingContext(ctx context.Context) error
-}
-
-// HealthResponse represents the structured health payload
-type HealthResponse struct {
-	Status       string            `json:"status"`
-	Service      string            `json:"service"`
-	Timestamp    string            `json:"timestamp"`
-	Dependencies map[string]string `json:"dependencies"`
-}
-
-// --------------------
-// LIVENESS HANDLER
-// --------------------
-
-// LivenessHandler checks if the service is alive (no dependencies)
-func LivenessHandler(c *gin.Context) {
-	resp := HealthResponse{
-		Status:    StatusAlive,
-		Service:   ServiceName,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-
-	c.JSON(http.StatusOK, resp)
+func (h *Handler) Health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "ok",
+		"service": "stellarbill-backend",
+	})
 }
 
 // --------------------
