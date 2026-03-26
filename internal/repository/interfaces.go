@@ -16,4 +16,6 @@ type SubscriptionRepository interface {
 // PlanRepository is the read interface used by the service.
 type PlanRepository interface {
 	FindByID(ctx context.Context, id string) (*PlanRow, error)
+	// List returns all plans visible to the caller (for simplicity tests use a global list).
+	List(ctx context.Context) ([]*PlanRow, error)
 }
