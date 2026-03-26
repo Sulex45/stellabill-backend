@@ -6,12 +6,14 @@ import (
 	"os"
 	"time"
 
+	"database/sql"
+
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/config"
-	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
-	"stellarbill-backend/internal/security"
+	"stellarbill-backend/internal/services"
 )
 
 func main() {
@@ -56,12 +58,12 @@ func main() {
 			zap.Strings("warnings", vResult.Warnings))
 	}
 
-	// Create router with configured timeouts
+	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger(logger))
 
-	// Set security headers
+	// Security headers middleware
 	router.Use(func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
@@ -69,8 +71,11 @@ func main() {
 		c.Next()
 	})
 
-	// Register routes
-	routes.Register(router)
+	// Wire up services and handlers, then register routes
+	planSvc := services.NewPlanService()
+	subSvc := services.NewSubscriptionService()
+	h := handlers.NewHandler(planSvc, subSvc)
+	routes.Register(router, h)
 
 	// Build server address
 	addr := fmt.Sprintf(":%d", cfg.Port)
@@ -96,5 +101,31 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
+
+	logger.Init()
+
+	r := gin.New()
+
+	r.Use(middleware.RecoveryLogger())
+	r.Use(middleware.RequestLogger())
+
+	var db *sql.DB = nil // existing or future DB
+
+	routes.RegisterRoutes(r, db)
+
+	r.Run()
+}
+
+func newRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(
+		middleware.Recovery(log.Default()),
+		middleware.RequestID(),
+		middleware.Logging(log.Default()),
+		middleware.CORS("*"),
+		middleware.RateLimit(middleware.NewRateLimiter(60, time.Minute)),
+	)
+	routes.Register(router)
+	return router
 }
 
