@@ -278,9 +278,9 @@ func TestIntegration_GetSubscription_SoftDeleted_Returns410(t *testing.T) {
 	if w.Code != http.StatusGone {
 		t.Fatalf("expected 410, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] != "subscription has been deleted" {
-		t.Errorf("unexpected error message: %q", body["error"])
+	if body.Code != string(ErrorCodeNotFound) {
+		t.Errorf("unexpected error code: %q", body.Code)
 	}
 }

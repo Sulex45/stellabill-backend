@@ -71,10 +71,13 @@ func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeUnauthorized) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeUnauthorized, body.Code)
+	}
+	if body.Message == "" {
+		t.Error("expected error message in response body")
 	}
 }
 
@@ -82,6 +85,7 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
+		c.Set("traceID", "test-trace")
 		c.Set("callerID", "caller-123")
 		c.Set("tenantID", "tenant-1")
 		c.Next()
@@ -95,10 +99,10 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeValidationFailed) {
+		t.Errorf("expected validation error code, got %s", body.Code)
 	}
 }
 
@@ -172,10 +176,10 @@ func TestGetSubscription_ErrNotFound_Returns404(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeNotFound) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeNotFound, body.Code)
 	}
 }
 
@@ -190,10 +194,10 @@ func TestGetSubscription_ErrDeleted_Returns410(t *testing.T) {
 	if w.Code != http.StatusGone {
 		t.Fatalf("expected 410, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] != "subscription has been deleted" {
-		t.Errorf("unexpected error message: %q", body["error"])
+	if body.Code != string(ErrorCodeNotFound) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeNotFound, body.Code)
 	}
 }
 
@@ -208,10 +212,10 @@ func TestGetSubscription_ErrForbidden_Returns403(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeForbidden) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeForbidden, body.Code)
 	}
 }
 
@@ -226,10 +230,10 @@ func TestGetSubscription_ErrBillingParse_Returns500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeInternalError) {
+		t.Errorf("expected internal error code, got %s", body.Code)
 	}
 }
 
