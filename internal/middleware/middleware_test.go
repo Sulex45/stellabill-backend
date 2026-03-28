@@ -282,3 +282,84 @@ func assertBodyField(t *testing.T, res *httptest.ResponseRecorder, key, want str
 func contains(s, substr string) bool {
 	return bytes.Contains([]byte(s), []byte(substr))
 }
+
+func TestDeprecationHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.GET("/api/plans", DeprecationHeaders(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	router.GET("/api/subscriptions/:id", DeprecationHeaders(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	t.Run("sets Deprecation and Sunset headers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/plans", nil)
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res.Code)
+		}
+		if got := res.Header().Get("Deprecation"); got != "true" {
+			t.Fatalf("expected Deprecation=true, got %q", got)
+		}
+		if got := res.Header().Get("Sunset"); got == "" {
+			t.Fatal("expected Sunset header to be set")
+		}
+	})
+
+	t.Run("Link header points to v1 equivalent", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/plans", nil)
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+
+		want := `</api/v1/plans>; rel="successor-version"`
+		if got := res.Header().Get("Link"); got != want {
+			t.Fatalf("expected Link=%q, got %q", want, got)
+		}
+	})
+
+	t.Run("Link header includes path params", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/subscriptions/sub_42", nil)
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+
+		want := `</api/v1/subscriptions/sub_42>; rel="successor-version"`
+		if got := res.Header().Get("Link"); got != want {
+			t.Fatalf("expected Link=%q, got %q", want, got)
+		}
+	})
+
+	t.Run("handler still executes after deprecation middleware", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/plans", nil)
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+
+		if res.Code != http.StatusOK {
+			t.Fatalf("expected handler to run and return 200, got %d", res.Code)
+		}
+	})
+}
+
+func TestDeprecationHeadersNotOnV1(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	// v1 route without deprecation middleware — simulates correct wiring
+	router.GET("/api/v1/plans", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/plans", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if got := res.Header().Get("Deprecation"); got != "" {
+		t.Fatalf("v1 routes should not have Deprecation header, got %q", got)
+	}
+	if got := res.Header().Get("Sunset"); got != "" {
+		t.Fatalf("v1 routes should not have Sunset header, got %q", got)
+	}
+}

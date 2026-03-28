@@ -199,3 +199,21 @@ func newRequestID() string {
 	}
 	return hex.EncodeToString(buf)
 }
+
+func DeprecationHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Deprecation", "true")
+		c.Header("Sunset", time.Now().Add(180*24*time.Hour).Format(time.RFC1123))
+
+		// Build Link header pointing to the v1 equivalent of this route.
+		// Requests to /api/foo become </api/v1/foo>; rel="successor-version".
+		path := c.Request.URL.Path
+		const prefix = "/api"
+		if strings.HasPrefix(path, prefix) {
+			successor := prefix + "/v1" + path[len(prefix):]
+			c.Header("Link", `<`+successor+`>; rel="successor-version"`)
+		}
+
+		c.Next()
+	}
+}
