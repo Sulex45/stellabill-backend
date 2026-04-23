@@ -14,9 +14,6 @@ type AdminHandler struct {
 
 // NewAdminHandler builds an admin handler with the expected token.
 func NewAdminHandler(token string) *AdminHandler {
-	if token == "" {
-		token = "change-me-admin-token"
-	}
 	return &AdminHandler{expectedToken: token}
 }
 

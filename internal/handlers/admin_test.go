@@ -88,7 +88,7 @@ func TestAdminPurgeDenied(t *testing.T) {
 	}
 }
 
-func TestAdminDefaultToken(t *testing.T) {
+func TestAdminWithoutConfiguredTokenDeniesRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sink := &audit.MemorySink{}
 	logger := audit.NewLogger("secret", sink)
@@ -103,7 +103,7 @@ func TestAdminDefaultToken(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 with default token, got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 when no admin token configured, got %d", rec.Code)
 	}
 }

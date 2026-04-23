@@ -1,5 +1,25 @@
 # Security Notes: Outbox Pattern Implementation
 
+## Configuration Fail-Fast Controls
+
+The backend now enforces fail-fast startup validation for security-sensitive
+configuration. Startup is blocked when required secrets are missing or when
+unsafe values are provided.
+
+Key controls:
+
+- `DATABASE_URL`, `JWT_SECRET`, and `ADMIN_TOKEN` are required.
+- `JWT_SECRET` and `ADMIN_TOKEN` must be strong secrets: minimum 12 characters
+    with upper, lower, digit, and special characters.
+- `ALLOWED_ORIGINS` is required in `production` and `staging` and must contain
+    comma-separated `https://` origins.
+- Rate limit settings are strictly validated (`RATE_LIMIT_MODE`, RPS/BURST
+    ranges, and whitelist path format).
+- Timeout and header-size settings are range-validated to prevent unsafe or
+    pathological runtime behavior.
+
+Validation errors are structured and secret values are masked in error output.
+
 ## Overview
 
 This document outlines security considerations for the outbox pattern implementation in the Stellabill backend. The outbox system handles event data and external communications, requiring careful security considerations.
