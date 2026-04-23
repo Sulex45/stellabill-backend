@@ -12,7 +12,11 @@ var Log = logrus.New()
 func Init() {
 	Log.SetFormatter(&logrus.JSONFormatter{})
 	Log.SetOutput(os.Stdout)
-	Log.AddHook(otellogrus.NewHook())
+	svcName := os.Getenv("TRACING_SERVICE_NAME")
+	if svcName == "" {
+		svcName = "stellabill-backend"
+	}
+	Log.AddHook(otellogrus.NewHook(svcName))
 
 	level := os.Getenv("LOG_LEVEL")
 	switch level {
