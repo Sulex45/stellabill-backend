@@ -6,6 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
+	"stellarbill-backend/internal/correlation"
 	"stellarbill-backend/internal/security"
 
 	"go.uber.org/zap"
@@ -222,6 +228,40 @@ func (w *Worker) executeJob(job *Job) {
 	w.metrics.JobsProcessed++
 	w.metrics.mu.Unlock()
 
+	w.metrics.mu.Unlock()
+
+	// Build context with job_id for correlation
+	baseCtx := correlation.WithJobID(w.ctx, job.ID)
+
+	// Create root OTel span for this job
+	spanOpts := []trace.SpanStartOption{
+		trace.WithAttributes(
+			attribute.String("job.id", job.ID),
+			attribute.String("job.type", job.Type),
+			attribute.String("job.subscription_id", job.SubscriptionID),
+			attribute.Int("job.attempt", job.Attempts),
+		),
+		trace.WithSpanKind(trace.SpanKindConsumer),
+	}
+
+	// Link to parent HTTP trace if job originated from an HTTP request
+	if job.ParentTraceID != "" {
+		traceID, err := trace.TraceIDFromHex(job.ParentTraceID)
+		if err == nil {
+			link := trace.Link{
+				SpanContext: trace.NewSpanContext(trace.SpanContextConfig{
+					TraceID:    traceID,
+					TraceFlags: trace.FlagsSampled,
+				}),
+			}
+			spanOpts = append(spanOpts, trace.WithLinks(link))
+		}
+	}
+
+	tracer := otel.Tracer("worker")
+	spanCtx, span := tracer.Start(baseCtx, "worker.executeJob", spanOpts...)
+	defer span.End()
+
 	// Update job status to running
 	job.Status = JobStatusRunning
 	job.Attempts++
@@ -231,18 +271,23 @@ func (w *Worker) executeJob(job *Job) {
 		security.ProductionLogger().Error("Error updating job to running",
 			zap.String("job_id", job.ID),
 			zap.Error(err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return
 	}
 
-	// Execute with timeout
-	execCtx, cancel := context.WithTimeout(w.ctx, w.config.LockTTL-5*time.Second)
+	// Execute with timeout using span context
+	execCtx, cancel := context.WithTimeout(spanCtx, w.config.LockTTL-5*time.Second)
 	defer cancel()
 
 	err := w.executor.Execute(execCtx, job)
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.handleJobFailure(job, err)
 	} else {
+		span.SetStatus(codes.Ok, "")
 		w.handleJobSuccess(job)
 	}
 }
