@@ -19,17 +19,21 @@ const (
 type Job struct {
 	ID             string
 	SubscriptionID string
-	Type           string
-	Status         JobStatus
-	ScheduledAt    time.Time
-	StartedAt      *time.Time
-	CompletedAt    *time.Time
-	Attempts       int
-	MaxAttempts    int
-	LastError      string
-	Payload        map[string]interface{}
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	Type         string
+	Status       JobStatus
+	ScheduledAt  time.Time
+	StartedAt   *time.Time
+	CompletedAt *time.Time
+	Attempts   int
+	MaxAttempts int
+	LastError   string
+	Payload    map[string]interface{}
+	CreatedAt   time.Time
+	UpdatedAt  time.Time
+
+	// ParentTraceID links a job to its originating HTTP request trace.
+	// Empty if the job was triggered manually or by a scheduler (no HTTP origin).
+	ParentTraceID string
 }
 
 // JobStore defines the interface for job persistence
