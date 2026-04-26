@@ -52,6 +52,12 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
+		tenantID, exists := c.Get("tenantID")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "tenant id required"})
+			return
+		}
+
 		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
 			RespondWithValidationError(c, "Invalid query parameters", map[string]interface{}{
 				"reason": err.Error(),
@@ -68,12 +74,10 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
-		// Delegate to service (note: real implementation may include ownership checks)
-		_, _, err = svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		// Delegate to service
+		_, _, err = svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
 		if err != nil {
-			// Simplified error handling to keep compilation and behavior predictable during tests.
-			statusCode, code, message := MapServiceErrorToResponse(err)
-			RespondWithError(c, statusCode, code, message)
+			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
 			return
 		}
 
