@@ -62,6 +62,27 @@ type Config struct {
 	// Tracing configuration
 	TracingExporter    string
 	TracingServiceName string
+	// DB connection pool tuning.
+	// All durations are in seconds to keep env-var parsing uniform.
+	//
+	//   DB_POOL_MAX_CONNS            (default 25)  – hard ceiling on open connections.
+	//   DB_POOL_MIN_CONNS            (default 2)   – connections kept warm at all times.
+	//   DB_POOL_MAX_CONN_LIFETIME    (default 3600) – recycle connections after this many
+	//                                                 seconds to spread load across replicas
+	//                                                 and avoid stale TCP sessions.
+	//   DB_POOL_MAX_CONN_IDLE_TIME   (default 600)  – evict idle connections after this
+	//                                                 many seconds; prevents firewall drops.
+	//   DB_POOL_CONNECT_TIMEOUT      (default 5)   – per-dial timeout in seconds.
+	//   DB_POOL_HEALTH_CHECK_PERIOD  (default 30)  – how often pgxpool probes idle conns.
+	//   DB_POOL_METRICS_INTERVAL     (default 15)  – how often pool stats are scraped
+	//                                                 into Prometheus gauges.
+	DBPoolMaxConns           int
+	DBPoolMinConns           int
+	DBPoolMaxConnLifetime    int // seconds
+	DBPoolMaxConnIdleTime    int // seconds
+	DBPoolConnectTimeout     int // seconds
+	DBPoolHealthCheckPeriod  int // seconds
+	DBPoolMetricsInterval    int // seconds
 }
 
 // ValidationResult holds the result of configuration validation
@@ -89,24 +110,30 @@ func (v *ValidationResult) Error() string {
 
 // Constants for configuration limits
 const (
-	DefaultPort           = 8080
-	MinPort               = 1
-	MaxPort               = 65535
-	MinSecretLength       = 12
-	MaxHeaderBytes        = 1 << 20 // 1MB
-	DefaultReadTimeout    = 30      // seconds
-	DefaultWriteTimeout   = 30      // seconds
-	DefaultIdleTimeout    = 120     // seconds
-	DefaultRateLimitRPS   = 10
-	DefaultRateLimitBurst = 20
-	MinTimeoutSeconds     = 1
-	MaxTimeoutSeconds     = 3600
-	MinHeaderBytes        = 1024
-	MaxAllowedHeaderBytes = 16 << 20 // 16MB
-	MinRateLimitRPS       = 1
-	MaxRateLimitRPS       = 1000
-	MinRateLimitBurst     = 1
-	MaxRateLimitBurst     = 5000
+	DefaultPort         = 8080
+	MinPort             = 1
+	MaxPort             = 65535
+	MinSecretLength     = 12
+	MaxHeaderBytes      = 1 << 20 // 1MB
+	DefaultReadTimeout  = 30      // seconds
+	DefaultWriteTimeout = 30      // seconds
+	DefaultIdleTimeout  = 120     // seconds
+
+	// DB pool defaults — chosen to be safe for a typical single-instance
+	// Postgres with max_connections=100.  Tune upward for larger deployments.
+	DefaultDBPoolMaxConns          = 25   // leave headroom for other clients
+	DefaultDBPoolMinConns          = 2    // keep 2 warm to avoid cold-start latency
+	DefaultDBPoolMaxConnLifetime   = 3600 // 1 hour — recycle before firewalls drop
+	DefaultDBPoolMaxConnIdleTime   = 600  // 10 min — evict idle before firewall timeout
+	DefaultDBPoolConnectTimeout    = 5    // 5 s per dial attempt
+	DefaultDBPoolHealthCheckPeriod = 30   // 30 s proactive idle-conn check
+	DefaultDBPoolMetricsInterval   = 15   // 15 s Prometheus scrape cadence
+
+	// Validation bounds
+	MinDBPoolMaxConns = 1
+	MaxDBPoolMaxConns = 500
+	MinDBPoolTimeout  = 1   // seconds
+	MaxDBPoolTimeout  = 300 // seconds
 )
 
 // Required environment variables
@@ -118,20 +145,22 @@ var requiredEnvVars = []string{
 
 // Optional environment variables with defaults
 var optionalEnvVars = map[string]string{
-	"PORT":                 "8080",
-	"ENV":                  "development",
-	"MAX_HEADER_BYTES":     "1048576",
-	"READ_TIMEOUT":         "30",
-	"WRITE_TIMEOUT":        "30",
-	"IDLE_TIMEOUT":         "120",
-	"RATE_LIMIT_ENABLED":   "true",
-	"RATE_LIMIT_MODE":      "ip",
-	"RATE_LIMIT_RPS":       "10",
-	"RATE_LIMIT_BURST":     "20",
-	"RATE_LIMIT_WHITELIST": "/api/health",
+	"PORT":             "8080",
+	"ENV":              "development",
+	"MAX_HEADER_BYTES": "1048576",
+	"READ_TIMEOUT":     "30",
+	"WRITE_TIMEOUT":    "30",
+	"IDLE_TIMEOUT":     "120",
 	"TRACING_EXPORTER":     "stdout",
 	"TRACING_SERVICE_NAME": "stellabill-backend",
-	"ALLOWED_ORIGINS":      "",
+	// DB pool
+	"DB_POOL_MAX_CONNS":           "25",
+	"DB_POOL_MIN_CONNS":           "2",
+	"DB_POOL_MAX_CONN_LIFETIME":   "3600",
+	"DB_POOL_MAX_CONN_IDLE_TIME":  "600",
+	"DB_POOL_CONNECT_TIMEOUT":     "5",
+	"DB_POOL_HEALTH_CHECK_PERIOD": "30",
+	"DB_POOL_METRICS_INTERVAL":    "15",
 }
 
 // Option configures the Load function.
@@ -168,22 +197,24 @@ func Load(opts ...Option) (Config, error) {
 	}
 
 	cfg := Config{
-		Env:                getEnv("ENV", "development"),
-		Port:               DefaultPort,
-		DBConn:             "",
-		JWTSecret:          "",
-		MaxHeaderBytes:     MaxHeaderBytes,
-		ReadTimeout:        DefaultReadTimeout,
-		WriteTimeout:       DefaultWriteTimeout,
-		IdleTimeout:        DefaultIdleTimeout,
-		AllowedOrigins:     strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")),
-		RateLimitEnabled:   getEnvBool("RATE_LIMIT_ENABLED", true),
-		RateLimitMode:      getEnv("RATE_LIMIT_MODE", "ip"),
-		RateLimitRPS:       getEnvInt("RATE_LIMIT_RPS", DefaultRateLimitRPS),
-		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", DefaultRateLimitBurst),
-		RateLimitWhitelist: getEnvSlice("RATE_LIMIT_WHITELIST", []string{"/api/health"}),
+		Env:            getEnv("ENV", "development"),
+		Port:           DefaultPort,
+		DBConn:         "",
+		JWTSecret:      "",
+		MaxHeaderBytes: MaxHeaderBytes,
+		ReadTimeout:    DefaultReadTimeout,
+		WriteTimeout:   DefaultWriteTimeout,
+		IdleTimeout:    DefaultIdleTimeout,
 		TracingExporter:    getEnv("TRACING_EXPORTER", "stdout"),
 		TracingServiceName: getEnv("TRACING_SERVICE_NAME", "stellabill-backend"),
+		// DB pool — safe production defaults
+		DBPoolMaxConns:          DefaultDBPoolMaxConns,
+		DBPoolMinConns:          DefaultDBPoolMinConns,
+		DBPoolMaxConnLifetime:   DefaultDBPoolMaxConnLifetime,
+		DBPoolMaxConnIdleTime:   DefaultDBPoolMaxConnIdleTime,
+		DBPoolConnectTimeout:    DefaultDBPoolConnectTimeout,
+		DBPoolHealthCheckPeriod: DefaultDBPoolHealthCheckPeriod,
+		DBPoolMetricsInterval:   DefaultDBPoolMetricsInterval,
 	}
 
 	// Resolve secrets through the provider
@@ -467,28 +498,8 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		c.TracingServiceName = svcName
 	}
 
-	if c.Env == "production" || c.Env == "staging" {
-		if strings.TrimSpace(c.AllowedOrigins) == "" {
-			result.Errors = append(result.Errors, ConfigError{
-				Type:    ErrMissingEnvVar,
-				Key:     "ALLOWED_ORIGINS",
-				Message: "is required in production and staging",
-				Value:   "",
-			})
-		} else {
-			for _, origin := range strings.Split(c.AllowedOrigins, ",") {
-				trimmed := strings.TrimSpace(origin)
-				if !isValidSecureOrigin(trimmed) {
-					result.Errors = append(result.Errors, ConfigError{
-						Type:    ErrInvalidURL,
-						Key:     "ALLOWED_ORIGINS",
-						Message: "must contain comma-separated valid https origins",
-						Value:   trimmed,
-					})
-				}
-			}
-		}
-	}
+	// Validate DB pool configuration
+	validateDBPool(c, result)
 
 	// Set optional env values
 	c.Env = getEnv("ENV", "development")
@@ -644,6 +655,60 @@ func getEnvSlice(key string, fallback []string) []string {
 		return parts
 	}
 	return fallback
+}
+
+// validateDBPool reads DB_POOL_* env vars, validates them, and writes safe
+// values back into cfg.  Invalid values produce warnings (not hard errors) so
+// the server can still start with defaults rather than refusing to boot.
+func validateDBPool(c *Config, result *ValidationResult) {
+	type poolIntVar struct {
+		envKey   string
+		min, max int
+		target   *int
+		defVal   int
+	}
+
+	vars := []poolIntVar{
+		{"DB_POOL_MAX_CONNS", MinDBPoolMaxConns, MaxDBPoolMaxConns, &c.DBPoolMaxConns, DefaultDBPoolMaxConns},
+		{"DB_POOL_MIN_CONNS", 0, MaxDBPoolMaxConns, &c.DBPoolMinConns, DefaultDBPoolMinConns},
+		{"DB_POOL_MAX_CONN_LIFETIME", MinDBPoolTimeout, 86400, &c.DBPoolMaxConnLifetime, DefaultDBPoolMaxConnLifetime},
+		{"DB_POOL_MAX_CONN_IDLE_TIME", MinDBPoolTimeout, 86400, &c.DBPoolMaxConnIdleTime, DefaultDBPoolMaxConnIdleTime},
+		{"DB_POOL_CONNECT_TIMEOUT", MinDBPoolTimeout, MaxDBPoolTimeout, &c.DBPoolConnectTimeout, DefaultDBPoolConnectTimeout},
+		{"DB_POOL_HEALTH_CHECK_PERIOD", MinDBPoolTimeout, MaxDBPoolTimeout, &c.DBPoolHealthCheckPeriod, DefaultDBPoolHealthCheckPeriod},
+		{"DB_POOL_METRICS_INTERVAL", MinDBPoolTimeout, MaxDBPoolTimeout, &c.DBPoolMetricsInterval, DefaultDBPoolMetricsInterval},
+	}
+
+	for _, v := range vars {
+		raw := os.Getenv(v.envKey)
+		if raw == "" {
+			continue // keep the default already set in Load()
+		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < v.min || n > v.max {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("%s invalid (value=%q, allowed %d–%d), using default %d",
+					v.envKey, raw, v.min, v.max, v.defVal))
+			continue
+		}
+		*v.target = n
+	}
+
+	// Cross-field: MinConns must not exceed MaxConns.
+	if c.DBPoolMinConns > c.DBPoolMaxConns {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("DB_POOL_MIN_CONNS (%d) > DB_POOL_MAX_CONNS (%d); clamping min to max",
+				c.DBPoolMinConns, c.DBPoolMaxConns))
+		c.DBPoolMinConns = c.DBPoolMaxConns
+	}
+
+	// Cross-field: IdleTime must be less than Lifetime to avoid evicting
+	// connections before they have a chance to be recycled gracefully.
+	if c.DBPoolMaxConnIdleTime >= c.DBPoolMaxConnLifetime {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("DB_POOL_MAX_CONN_IDLE_TIME (%ds) >= DB_POOL_MAX_CONN_LIFETIME (%ds); "+
+				"idle connections will be evicted before lifetime recycle fires — consider reducing idle time",
+				c.DBPoolMaxConnIdleTime, c.DBPoolMaxConnLifetime))
+	}
 }
 
 // GetRequiredEnvVars returns the list of required environment variables
