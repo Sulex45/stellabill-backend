@@ -104,9 +104,6 @@ type AdminHandler struct {
 // When token is empty a fallback value is used so that the zero-value is never
 // silently insecure (callers that rely on the default must make that explicit).
 func NewAdminHandler(token string) *AdminHandler {
-	if token == "" {
-		token = "change-me-admin-token"
-	}
 	return &AdminHandler{expectedToken: token}
 }
 

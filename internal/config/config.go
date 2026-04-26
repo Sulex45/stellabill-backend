@@ -21,6 +21,7 @@ const (
 	ErrInvalidPort      ConfigErrorType = "INVALID_PORT"
 	ErrInvalidURL       ConfigErrorType = "INVALID_URL"
 	ErrWeakSecret       ConfigErrorType = "WEAK_SECRET"
+	ErrInvalidValue     ConfigErrorType = "INVALID_VALUE"
 	ErrValidationFailed ConfigErrorType = "VALIDATION_FAILED"
 )
 
@@ -50,6 +51,8 @@ type Config struct {
 	ReadTimeout    int
 	WriteTimeout   int
 	IdleTimeout    int
+	AllowedOrigins string
+	AdminToken     string
 	// Rate limiting configuration
 	RateLimitEnabled   bool
 	RateLimitMode      string
@@ -137,6 +140,7 @@ const (
 var requiredEnvVars = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
+	"ADMIN_TOKEN",
 }
 
 // Optional environment variables with defaults
@@ -178,6 +182,7 @@ func WithSecretsProvider(p secrets.Provider) Option {
 var secretKeys = []string{
 	"DATABASE_URL",
 	"JWT_SECRET",
+	"ADMIN_TOKEN",
 }
 
 // Load loads configuration from environment variables with validation.
@@ -327,37 +332,70 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		}
 	}
 
+	if token, ok := resolvedSecrets["ADMIN_TOKEN"]; ok {
+		if !isValidSecret(token) {
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrWeakSecret,
+				Key:     "ADMIN_TOKEN",
+				Message: fmt.Sprintf("must be at least %d characters and contain upper/lower/digit/special characters", MinSecretLength),
+				Value:   maskSecret(token),
+			})
+		} else {
+			c.AdminToken = token
+		}
+	}
+
 	// Validate optional MAX_HEADER_BYTES
 	if val := os.Getenv("MAX_HEADER_BYTES"); val != "" {
-		if max, err := strconv.Atoi(val); err == nil && max > 0 {
+		if max, err := strconv.Atoi(val); err == nil && max >= MinHeaderBytes && max <= MaxAllowedHeaderBytes {
 			c.MaxHeaderBytes = max
 		} else {
-			result.Warnings = append(result.Warnings, "MAX_HEADER_BYTES invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "MAX_HEADER_BYTES",
+				Message: fmt.Sprintf("must be between %d and %d", MinHeaderBytes, MaxAllowedHeaderBytes),
+				Value:   val,
+			})
 		}
 	}
 
 	// Validate optional timeouts
 	if val := os.Getenv("READ_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil && timeout > 0 {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
 			c.ReadTimeout = timeout
 		} else {
-			result.Warnings = append(result.Warnings, "READ_TIMEOUT invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "READ_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
 		}
 	}
 
 	if val := os.Getenv("WRITE_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil && timeout > 0 {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
 			c.WriteTimeout = timeout
 		} else {
-			result.Warnings = append(result.Warnings, "WRITE_TIMEOUT invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "WRITE_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
 		}
 	}
 
 	if val := os.Getenv("IDLE_TIMEOUT"); val != "" {
-		if timeout, err := strconv.Atoi(val); err == nil && timeout > 0 {
+		if timeout, err := strconv.Atoi(val); err == nil && timeout >= MinTimeoutSeconds && timeout <= MaxTimeoutSeconds {
 			c.IdleTimeout = timeout
 		} else {
-			result.Warnings = append(result.Warnings, "IDLE_TIMEOUT invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "IDLE_TIMEOUT",
+				Message: fmt.Sprintf("must be between %d and %d seconds", MinTimeoutSeconds, MaxTimeoutSeconds),
+				Value:   val,
+			})
 		}
 	}
 
@@ -366,7 +404,12 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		if enabled, err := strconv.ParseBool(val); err == nil {
 			c.RateLimitEnabled = enabled
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_ENABLED invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_ENABLED",
+				Message: "must be a valid boolean",
+				Value:   val,
+			})
 		}
 	}
 
@@ -375,30 +418,63 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 		if validModes[mode] {
 			c.RateLimitMode = mode
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_MODE invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_MODE",
+				Message: "must be one of: ip, user, hybrid",
+				Value:   mode,
+			})
 		}
 	}
 
 	if val := os.Getenv("RATE_LIMIT_RPS"); val != "" {
-		if rps, err := strconv.Atoi(val); err == nil && rps > 0 && rps <= 1000 {
+		if rps, err := strconv.Atoi(val); err == nil && rps >= MinRateLimitRPS && rps <= MaxRateLimitRPS {
 			c.RateLimitRPS = rps
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_RPS invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_RPS",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitRPS, MaxRateLimitRPS),
+				Value:   val,
+			})
 		}
 	}
 
 	if val := os.Getenv("RATE_LIMIT_BURST"); val != "" {
-		if burst, err := strconv.Atoi(val); err == nil && burst > 0 && burst <= 5000 {
+		if burst, err := strconv.Atoi(val); err == nil && burst >= MinRateLimitBurst && burst <= MaxRateLimitBurst {
 			c.RateLimitBurst = burst
 		} else {
-			result.Warnings = append(result.Warnings, "RATE_LIMIT_BURST invalid, using default")
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "RATE_LIMIT_BURST",
+				Message: fmt.Sprintf("must be between %d and %d", MinRateLimitBurst, MaxRateLimitBurst),
+				Value:   val,
+			})
 		}
+	}
+
+	if c.RateLimitBurst < c.RateLimitRPS {
+		result.Errors = append(result.Errors, ConfigError{
+			Type:    ErrInvalidValue,
+			Key:     "RATE_LIMIT_BURST",
+			Message: "must be greater than or equal to RATE_LIMIT_RPS",
+			Value:   strconv.Itoa(c.RateLimitBurst),
+		})
 	}
 
 	if whitelist := os.Getenv("RATE_LIMIT_WHITELIST"); whitelist != "" {
 		paths := strings.Split(whitelist, ",")
 		for i, path := range paths {
-			paths[i] = strings.TrimSpace(path)
+			clean := strings.TrimSpace(path)
+			if clean == "" || !strings.HasPrefix(clean, "/") {
+				result.Errors = append(result.Errors, ConfigError{
+					Type:    ErrInvalidValue,
+					Key:     "RATE_LIMIT_WHITELIST",
+					Message: "each whitelist path must be non-empty and start with '/'",
+					Value:   clean,
+				})
+			}
+			paths[i] = clean
 		}
 		c.RateLimitWhitelist = paths
 	}
@@ -407,7 +483,12 @@ func (c *Config) validate(resolvedSecrets map[string]string, secretErrs map[stri
 	if exporter := os.Getenv("TRACING_EXPORTER"); exporter != "" {
 		validExporters := map[string]bool{"stdout": true, "otlp": true, "none": true}
 		if !validExporters[exporter] {
-			result.Warnings = append(result.Warnings, fmt.Sprintf("TRACING_EXPORTER invalid: %s, using default", exporter))
+			result.Errors = append(result.Errors, ConfigError{
+				Type:    ErrInvalidValue,
+				Key:     "TRACING_EXPORTER",
+				Message: "must be one of: stdout, otlp, none",
+				Value:   exporter,
+			})
 		} else {
 			c.TracingExporter = exporter
 		}
@@ -489,7 +570,24 @@ func isValidSecret(secret string) bool {
 
 	_ = hasSpecial
 
-	return hasUpper && hasLower && hasDigit
+	return hasUpper && hasLower && hasDigit && hasSpecial
+}
+
+func isValidSecureOrigin(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "https" {
+		return false
+	}
+	if parsed.Host == "" {
+		return false
+	}
+	return parsed.Path == "" || parsed.Path == "/"
 }
 
 // maskPassword masks the password in a database URL for security
